@@ -15,7 +15,6 @@
  */
 
 import {
-  APPEARANCE_AREAS,
   Switch,
   ColorSwatches,
   PROFILE_SWATCHES,
@@ -24,6 +23,30 @@ import {
   host
 } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
+
+// Page area. A string literal, not an SDK export: `ROUTES_AREA` is declared in
+// `app/routes.ts` and is NOT re-exported through `@hermes/plugin-sdk`, so a
+// plugin that imports it gets undefined and registers under the literal string
+// "undefined" — which no slot consumes. Verified against the packaged build.
+const ROUTES_AREA = 'routes'
+
+// NOT `appearance.extra`. The app mounts that slot only when `subpage ===
+// undefined`, and `resolveSettingsSubpage` returns `pages[0]` when no `page=`
+// is given, so every navigation into Appearance lands on a real subpage — the
+// slot is unreachable by design and no route reaches it. Hence a page of our
+// own, reachable from the palette row only (no sidebar row: it led nowhere).
+const PAGE_PATH = '/chat-bubbles'
+
+// iMessage's own pairing: your bubble saturated green on the right, theirs a
+// neutral grey on the left. Deliberately NOT theme-following by default —
+// tinted-from-the-accent was the whole reason the two sides were hard to tell
+// apart on some themes. Both are overridable in the page.
+// The agent's bubble is a LIGHT green, not iMessage's grey: your bubble sits
+// at luminance 0.17 (very dark), so a pale green still separates from it by
+// 190/255 of channel difference — MORE than the grey did. Two greens read fine
+// because one is dark and saturated (77%) and the other is pale (7%).
+const IMESSAGE_GREEN = '#1e8449'
+const AGENT_GREEN = '#dcecdc'
 
 const PLUGIN_ID = 'chat-bubbles'
 const STYLE_ID = 'hermes-chat-bubbles-style'
@@ -37,13 +60,15 @@ const DEFAULTS = {
   userWidth: 68,
   agentWidth: 88,
   radius: 18,
-  // null = follow the theme. userColor/agentColor are base hues; userMix and
-  // agentMix are how much of that hue is mixed into the surface — the
-  // darken/lighten lever.
-  userColor: null,
-  agentColor: null,
-  userMix: 15,
-  agentMix: 62
+  // iMessage's pairing, not the theme's. `null` means "follow the theme token",
+  // which is what made the two sides hard to tell apart on some themes.
+  userColor: IMESSAGE_GREEN,
+  agentColor: AGENT_GREEN,
+  // Mixing the hue against the editor background at these ratios is what gives
+  // iMessage's look: dense enough to read as a filled bubble, light enough that
+  // dark text stays AA-legible on top.
+  userMix: 100,
+  agentMix: 100
 }
 
 const clamp = (n, lo, hi, fallback) => {
@@ -109,6 +134,13 @@ body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"]
 body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"] .composer-human-message [data-slot="aui_user-message-text"],
 body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"] .composer-human-message [data-slot="aui_user-inline-text"] {
   color: inherit;
+}
+
+/* A dense fill needs light ink, or dark text on iMessage green is unreadable.
+   The stock bubble paints its own text colour, so this has to win. */
+body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"] .composer-human-message,
+body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"] .composer-human-message * {
+  color: var(--cb-user-ink, #ffffff);
 }
 
 body.hermes-chat-bubbles [data-chat-surface] [data-slot="aui_user-message-root"] .composer-human-message [data-slot="aui_user-inline-code"] {
@@ -261,7 +293,7 @@ function apply(cfg) {
   }
 
   if (!on) {
-    for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-agent-fill', '--cb-agent-mix']) {
+    for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-user-ink', '--cb-agent-fill', '--cb-agent-mix']) {
       root.style.removeProperty(k)
     }
     return
@@ -403,7 +435,8 @@ function Preview({ userColor, userMix, agentColor, agentMix, radius, userWidth, 
       ? `color-mix(in srgb, ${color} ${mix}%, var(--ui-bg-editor))`
       : `color-mix(in srgb, var(--ui-accent) ${mix}%, var(--ui-bg-editor))`,
     fontSize: '0.75rem',
-    color: 'var(--ui-text-primary)'
+    // Match the real bubbles: your dense green fill carries light ink.
+    color: side === 'end' ? 'var(--cb-user-ink, #ffffff)' : 'var(--ui-text-primary)'
   })
 
   return jsx(
@@ -434,6 +467,48 @@ function Preview({ userColor, userMix, agentColor, agentMix, radius, userWidth, 
         'Mensaje del agente'
       )
     )
+  )
+}
+
+/** The plugin's own page: a title, a line of explanation, then the controls. */
+function SettingsPage() {
+  return jsx(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.75rem',
+        maxWidth: '40rem',
+        margin: '0 auto',
+        padding: '1.5rem 1.25rem'
+      }
+    },
+    jsx(
+      'div',
+      {},
+      jsx(
+        'h2',
+        { style: { margin: 0, fontSize: '1.0625rem', color: 'var(--ui-text-primary)' } },
+        'Chat Bubbles'
+      ),
+      jsx(
+        'p',
+        {
+          style: {
+            margin: '0.25rem 0 0',
+            fontSize: '0.8125rem',
+            color: 'var(--ui-text-tertiary)',
+            lineHeight: 1.5
+          }
+        },
+        'Estilo de burbujas para cada conversación de Hermes Desktop: las tuyas verdes a la derecha, las del agente grises a la izquierda, como en iMessage. Los colores se pueden cambiar aquí.'
+      )
+    ),
+    // `{}`, never `null`: the real React runtime reads `config.key` off the
+    // props object, so `jsx(Comp, null)` throws "Cannot read properties of
+    // null (reading 'key')" and the page renders as a failed-to-render card.
+    jsx(AppearanceCard, {})
   )
 }
 
@@ -575,7 +650,7 @@ function dispose() {
   if (typeof document === 'undefined') return
   document.body?.classList.remove(BODY_CLASS, QUIET_CLASS)
   const root = document.documentElement
-  for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-agent-fill', '--cb-agent-mix']) {
+  for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-user-ink', '--cb-agent-fill', '--cb-agent-mix']) {
     root.style.removeProperty(k)
   }
   removeStyle()
@@ -618,33 +693,38 @@ export default {
     apply(initial)
     healStorage(initial, storedRaw)
 
+    // Our own page, reachable from the sidebar row below it. Not an
+    // `appearance.extra` card: that slot is unreachable (see PAGE_PATH's
+    // comment), so a card there would be invisible forever.
     ctx.register({
-      id: 'appearance-card',
-      area: APPEARANCE_AREAS.extra,
-      render: () => jsx(AppearanceCard, null)
+      id: 'page',
+      area: ROUTES_AREA,
+      data: { path: PAGE_PATH },
+      // `{}`, not `null` — see the note in SettingsPage.
+      render: () => jsx(SettingsPage, {})
     })
 
-    // The card only mounts on the TOP-LEVEL Appearance page — the app gates it
-    // with `subpage === undefined`, and Appearance has six subpages (Chat
-    // Display among them). So give the user a command that lands on the page
-    // itself instead of making them hunt for it.
+    // Palette row only. No sidebar row on purpose: it advertised a page the
+    // user then had to trust, and the user's own words were that it "led
+    // nowhere" — one clear way in beats a permanent sidebar entry that is
+    // really just a settings screen in disguise.
+
+    // Palette row: go to OUR page. The old route (`/settings?tab=...`) was both
+    // unreachable for the card and subject to `syncWorkspaceRoute`'s
+    // reveal-only-on-change rule, which made it look inert from a chat.
     ctx.register({
       id: 'palette-open-settings',
       area: 'palette',
       data: {
         id: `${PLUGIN_ID}.openSettings`,
         label: 'Chat Bubbles: open settings',
-        keywords: ['settings', 'apariencia', 'appearance', 'config', 'ajustes', 'panel'],
-        detail: () => 'Settings → Appearance',
+        keywords: ['settings', 'apariencia', 'appearance', 'config', 'ajustes', 'panel', 'page'],
+        detail: () => PAGE_PATH,
         run: () => {
           try {
-            // The tab id is `config:appearance`, NOT `appearance`: the settings
-            // tabs are `config:<section>` ids, and `useRouteEnumParam` silently
-            // coerces an unknown tab to the default view — which is why this
-            // row looked like it did nothing.
-            host.navigate('/settings?tab=config:appearance')
+            host.navigate(PAGE_PATH)
           } catch {
-            /* router unavailable — the card is still at Appearance's end */
+            /* router unavailable — the sidebar row still works */
           }
         }
       }

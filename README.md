@@ -54,7 +54,31 @@ values, and a clean `dispose`. No dependencies, no build step.
 
 ## Settings
 
-**Settings → Appearance**, at the bottom: the *Chat Bubbles* card.
+**⌘K → Chat Bubbles: open settings** opens the plugin's own page.
+
+> **Heads-up:** the settings live on the plugin's own page, not in the app's
+> Settings — **⌘K → Chat Bubbles: open settings**. The `appearance.extra` slot
+> is unreachable by design: the app mounts it only when `subpage === undefined`,
+> but `resolveSettingsSubpage` always returns a subpage (`general` when no
+> `page=` is given) and `openSettingsPage` always writes `?page=`.
+
+## The colours
+
+| | Fill | Side | Corner |
+|---|---|---|---|
+| **You** | `#1e8449` — dark green | right | 18/18/18/5 |
+| **Agent** | `#dcecdc` — pale green | left | 18/18/5/18 |
+
+Your bubble is dark and saturated (luminance 0.17), the agent's is pale (7%
+saturation) — that tonal gap is what separates them, and it separates *more*
+than a grey would (190/255 vs 174/255 of channel difference). Contrast of the
+text on top: 4.72 and 8.78, both AA.
+
+A dense fill needs light ink: dark text on iMessage green scored 2.1, so the
+plugin forces white text on your bubble via `--cb-user-ink`.
+
+Earlier iterations were a theme-tinted accent vs a neutral grey, which was too
+close on some themes — the complaint that started this.
 
 | Control | Default | |
 |---|---|---|
@@ -63,17 +87,17 @@ values, and a clean `dispose`. No dependencies, no build step.
 | Your bubble width | 68% | slider 30–100 |
 | Agent bubble width | 88% | slider 30–100 |
 | Corner radius | 18px | slider 0–30 |
-| Your bubble colour | theme (accent) | swatches; empty = follow theme |
-| **Your bubble intensity** | 15% | slider 5–100 |
-| Agent bubble colour | theme (elevated) | swatches; empty = follow theme |
-| **Agent bubble intensity** | 62% | slider 5–100 |
+| Your bubble colour | dark green `#1e8449` | swatches; empty = follow theme |
+| **Your bubble intensity** | 100% | slider 5–100 |
+| Agent bubble colour | pale green `#dcecdc` | swatches; empty = follow theme |
+| **Agent bubble intensity** | 100% | slider 5–100 |
 
 A live preview of both bubbles sits above the controls, so you can see what a
 setting does without going back to the conversation.
 
 Three palette commands, all persisted:
 
-- **⌘K → Chat Bubbles: open settings** (jumps to Settings → Appearance)
+- **⌘K → Chat Bubbles: open settings** (the plugin's page at `/chat-bubbles`)
 - **⌘K → Chat Bubbles: toggle**
 - **⌘K → Chat Bubbles: quiet working rows**
 
@@ -104,26 +128,42 @@ card writes variables and the browser repaints:
 --cb-user-w    --cb-agent-w    --cb-radius
 --cb-user-fill --cb-agent-fill
 --cb-user-mix  --cb-agent-mix
+--cb-user-ink
 ```
 
 An empty colour calls `removeProperty`, and the CSS falls back to the theme
 token (`--ui-accent`, `--ui-bg-elevated`) — so switching your Hermes skin
-recolours the bubbles on its own.
+recolours the bubbles on its own. The shipped defaults deliberately ignore the
+theme (the two greens above), because a theme-derived tint was the original
+complaint.
 
-The settings card lives at `APPEARANCE_AREAS.extra`, and it reaches the app
-through `ctx.register`. Its state goes in `ctx.storage`, so a bad value from an
-older build self-heals on load instead of being re-clamped forever.
+The settings page registers on the `routes` area at `/chat-bubbles` and reaches
+the app through `ctx.register`. Its state goes in `ctx.storage`, so a bad value
+from an older build self-heals on load instead of being re-clamped forever.
+
+> `ROUTES_AREA` is **not** exported from `@hermes/plugin-sdk` (it lives in
+> `app/routes.ts`). Importing it yields `undefined` and the contribution
+> registers under the literal string `"undefined"`, which no slot consumes —
+> declare it as a plain string.
 
 ## Troubleshooting
 
-**The settings card is not in Appearance.** It mounts on the top-level
-Appearance page only, not on its six subpages. Use the *open settings* palette
-row, or click Appearance itself (not *Chat Display*).
+**Open it with ⌘K → Chat Bubbles: open settings.** There is deliberately no
+sidebar row — one clear way in beats a permanent entry.
+
+The card mounts on the plugin's own page at `/chat-bubbles`, not in the app's
+Settings. There is no plugin area in Settings to hook, and the one official
+seam (`appearance.extra`) is unreachable — see the note above.
 
 **The palette rows are missing.** Press **⌘K → Reload desktop plugins**. The
 stylesheet and the palette rows come from the same file, so an app that has not
 reloaded shows both together — or neither. If a reload doesn't help, restart
 the app: the command palette reads the contribution registry once at mount.
+
+**The page renders "failed to render" / "Cannot read properties of null
+(reading 'key')".** You are running a build where a component was called as
+`jsx(Comp, null)`. The React runtime reads `config.key` off the props object,
+so `null` throws. Reload the plugin from the fixed version.
 
 **A future Hermes release renames a `data-slot`.** The bubbles quietly stop
 applying and nothing breaks — the settings card, the toggles and your saved

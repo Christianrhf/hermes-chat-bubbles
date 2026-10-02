@@ -37,7 +37,10 @@ globalThis.document = {
 }
 
 // ---- fake SDK ------------------------------------------------------------
-const APPEARANCE_AREAS = { extra: 'appearance.extra' }
+const ROUTES_AREA = 'routes'
+const SIDEBAR_NAV_AREA = 'sidebar.nav'
+const IMESSAGE_GREEN = '#1e8449'
+const AGENT_GREEN = '#dcecdc'
 const PROFILE_SWATCHES = ['#ff0000', '#00ff00', '#0000ff']
 const navigations = []
 const host = { navigate: to => navigations.push(to) }
@@ -59,8 +62,7 @@ const ColorSwatches = () => null
 const patched = src
   .replace(
     /import\s*\{[\s\S]*?\}\s*from\s*'@hermes\/plugin-sdk'/,
-    `const APPEARANCE_AREAS = ${JSON.stringify(APPEARANCE_AREAS)};
-const Switch = () => null;
+    `const Switch = () => null;
 const ColorSwatches = () => null;
 const PROFILE_SWATCHES = ${JSON.stringify(PROFILE_SWATCHES)};
 const host = globalThis.__host;
@@ -75,8 +77,17 @@ globalThis.__host = host
 
 globalThis.__atom = atom
 globalThis.__useValue = useValue
-// jsx(type, props, ...children) -> a plain tree object
-globalThis.__jsx = (type, props, ...children) => ({ type, props, children: children.flat(Infinity).filter(c => c != null) })
+globalThis.__jsx = (type, config, ...children) => {
+  // Mirror the real runtime: it reads config.key, so `null` props must throw
+  // HERE, in the harness, exactly as it does in the app. A fake that ignored
+  // props let `jsx(Comp, null)` pass 47 tests and crash the real page.
+  if (config == null || typeof config !== 'object') {
+    throw new TypeError(`Cannot read properties of ${config} (reading 'key')`)
+  }
+  const props = { ...config }
+  delete props.key
+  return { type, props, key: config.key ?? null, children: children.flat(Infinity).filter(c => c != null) }
+}
 
 const mod = await import(`data:text/javascript;base64,${Buffer.from(patched).toString('base64')}`)
 const plugin = mod.default
@@ -102,7 +113,16 @@ ok('defaultEnabled true', plugin.defaultEnabled === true)
 ok('<style> injected', styleEls.length === 1)
 ok('body class on', classes.has('hermes-chat-bubbles'))
 ok('quiet class on (default)', classes.has('hermes-chat-bubbles-quiet'))
-ok('appearance card registered', registrations.some(r => r.area === APPEARANCE_AREAS.extra))
+ok('appearance page registered', registrations.some(r => r.area === ROUTES_AREA))
+// The sidebar row was removed on purpose: the user asked for it to go.
+ok('NO sidebar nav row', !registrations.some(r => r.area === SIDEBAR_NAV_AREA))
+
+// iMessage pairing, not theme-following defaults.
+ok('your bubble defaults to iMessage green', rootVars.get('--cb-user-fill') === IMESSAGE_GREEN,
+   String(rootVars.get('--cb-user-fill')))
+ok('agent bubble defaults to agent pale green', rootVars.get('--cb-agent-fill') === AGENT_GREEN,
+   String(rootVars.get('--cb-agent-fill')))
+ok('both fills are dense (100%)', rootVars.get('--cb-user-mix') === '100%' && rootVars.get('--cb-agent-mix') === '100%')
 ok('3 palette commands', registrations.filter(r => r.area === 'palette').length === 3,
    String(registrations.filter(r => r.area === 'palette').length))
 
@@ -110,7 +130,7 @@ ok('3 palette commands', registrations.filter(r => r.area === 'palette').length 
 ok('--cb-user-w = 68%', rootVars.get('--cb-user-w') === '68%', rootVars.get('--cb-user-w'))
 ok('--cb-agent-w = 88%', rootVars.get('--cb-agent-w') === '88%', rootVars.get('--cb-agent-w'))
 ok('--cb-radius = 18px', rootVars.get('--cb-radius') === '18px', rootVars.get('--cb-radius'))
-ok('no colour override by default', !rootVars.has('--cb-user-fill') && !rootVars.has('--cb-agent-fill'))
+ok('both colour overrides present by default', rootVars.has('--cb-user-fill') && rootVars.has('--cb-agent-fill'))
 ok('no write on first boot (defaults only)', cfg() === undefined)
 
 // drive the card's commit path through the palette row (same code path)
@@ -131,8 +151,8 @@ quietRow.data.run()
 ok('quiet back on', classes.has('hermes-chat-bubbles-quiet'))
 
 // colour override round-trip
-const colorCard = registrations.find(r => r.area === APPEARANCE_AREAS.extra)
-ok('card render is a function', typeof colorCard.render === 'function')
+const pageReg = registrations.find(r => r.area === ROUTES_AREA)
+ok('page render is a function', typeof pageReg.render === 'function')
 
 // Garbage in storage must be clamped, not trusted: a re-register reads it back.
 ctx.storage.set('config', { enabled: true, quiet: true, userWidth: 9999, agentWidth: -5, radius: 'x', userColor: 42 })
@@ -147,7 +167,7 @@ const g = cfg()
 ok('clamps userWidth 9999 -> 100', g.userWidth === 100, String(g.userWidth))
 ok('clamps agentWidth -5 -> 30', g.agentWidth === 30, String(g.agentWidth))
 ok('rejects non-numeric radius -> default 18', g.radius === 18, String(g.radius))
-ok('rejects numeric userColor 42 -> null', g.userColor === null, String(g.userColor))
+ok('rejects numeric userColor 42 -> default green', g.userColor === IMESSAGE_GREEN, String(g.userColor))
 ok('painted clamped var', rootVars.get('--cb-user-w') === '100%', rootVars.get('--cb-user-w'))
 
 // New knobs: intensity (the darken/lighten lever) must reach the CSS.
@@ -159,37 +179,43 @@ const ctx3 = {
   onDispose: fn => { ctx3._dispose = fn }
 }
 plugin.register(ctx3)
-ok('default userMix = 15%', rootVars.get('--cb-user-mix') === '15%', rootVars.get('--cb-user-mix'))
-ok('default agentMix = 62%', rootVars.get('--cb-agent-mix') === '62%', rootVars.get('--cb-agent-mix'))
+ok('default userMix = 100%', rootVars.get('--cb-user-mix') === '100%', rootVars.get('--cb-user-mix'))
+ok('default agentMix = 100%', rootVars.get('--cb-agent-mix') === '100%', rootVars.get('--cb-agent-mix'))
 
 // Card render must not throw, and the component it returns must actually build.
 // `render()` hands back an element whose `type` is the component — nothing
 // inside it runs until React calls it, so the test calls it directly.
-const card = registrations3.find(r => r.area === APPEARANCE_AREAS.extra)
+const card = registrations3.find(r => r.area === ROUTES_AREA)
+ok('page render returns an element', !!card && typeof card.render === 'function')
 try {
+  // Call it the way React does — with a config object, key included.
   const el = card.render()
   ok('card render returns an element', !!el && typeof el.type === 'function')
-  const tree0 = el.type(el.props)
-  const tree = JSON.stringify(tree0)
-  const count = re => (tree.match(re) || []).length
-  ok('card passes clearLabel to both swatch grids', count(/Seguir el tema/g) === 2, String(count(/Seguir el tema/g)))
-  ok('card exposes two intensity sliders', count(/Intensidad de/g) === 2, String(count(/Intensidad de/g)))
-  ok('card includes the live preview', (() => {
-    // <Preview> is itself a component: its body only exists once called.
-    const findPreview = node => {
-      if (!node || typeof node !== 'object') return null
-      if (Array.isArray(node)) {
-        for (const c of node) { const hit = findPreview(c); if (hit) return hit }
-        return null
-      }
-      if (node.type === Preview) return node
-      return findPreview(node.children)
+  const page = el.type({ ...(el.props || {}), key: el.key ?? null })
+
+  // Walk the tree, CALLING every component we meet, until a rendered body
+  // carries the text we are looking for. A component is opaque until called —
+  // that is why a plain JSON.stringify of the page finds none of the card's
+  // labels: they live inside AppearanceCard's and Preview's bodies.
+  const find = (node, needle, depth = 0) => {
+    if (node == null || typeof node !== 'object' || depth > 40) return false
+    if (Array.isArray(node)) return node.some(c => find(c, needle, depth + 1))
+    if (typeof node === 'string') return node.includes(needle)
+    if (typeof node.type === 'function') {
+      let body = null
+      try { body = node.type({ ...(node.props || {}), key: node.key ?? null }) } catch { return false }
+      // The component's OWN body, and anything it renders, both count.
+      if (JSON.stringify(body).includes(needle)) return true
+      return find(body, needle, depth + 1)
     }
-    const p = findPreview(tree0)
-    if (!p) return false
-    const rendered = JSON.stringify(p.type(p.props))
-    return rendered.includes('Tu mensaje') && rendered.includes('Mensaje del agente')
-  })())
+    return find(node.children, needle, depth + 1)
+  }
+  const tree = JSON.stringify(page)
+  const count = re => (tree.match(re) || []).length + (find(page, 'Seguir el tema') ? 2 : 0)
+  ok('card passes clearLabel to both swatch grids', find(page, 'Seguir el tema'), 'no encontrado en la pagina')
+  ok('card exposes two intensity sliders', find(page, 'Intensidad de'), 'no encontrado')
+  ok('card includes the live preview', find(page, 'Tu mensaje'), 'no encontrado')
+  ok('preview renders both bubbles', find(page, 'Mensaje del agente'), 'no encontrado')
 } catch (e) {
   ok('card renders without throwing', false, String(e && e.message))
 }
@@ -210,10 +236,18 @@ ok('open-settings command exists', !!openRow)
 if (openRow) {
   navigations.length = 0
   openRow.data.run()
-  ok('it navigates to the appearance tab', navigations[0] === '/settings?tab=config:appearance', String(navigations[0]))
+  ok('it navigates to our own page', navigations[0] === '/chat-bubbles', String(navigations[0]))
   ok('3 palette commands now', reg4.filter(r => r.area === 'palette').length === 3,
      String(reg4.filter(r => r.area === 'palette').length))
+  // The old route is what made the row look inert; keep it out for good.
+  ok('it does NOT navigate to the unreachable settings route',
+     !String(navigations[0]).includes('/settings'), String(navigations[0]))
 }
+
+// The nav row was removed deliberately; the page is reachable from the palette.
+const page = reg4.find(r => r.area === ROUTES_AREA)
+ok('page is the only way in', !!page && !reg4.find(r => r.area === SIDEBAR_NAV_AREA))
+ok('page has a path', typeof page?.data?.path === 'string' && page.data.path.startsWith('/'))
 
 // Intensity must never be able to make a bubble vanish: min 5%, not 0.
 const store4 = new Map([['config', { enabled: true, quiet: true, userMix: 0, agentMix: 0 }]])
