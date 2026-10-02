@@ -39,6 +39,8 @@ globalThis.document = {
 // ---- fake SDK ------------------------------------------------------------
 const APPEARANCE_AREAS = { extra: 'appearance.extra' }
 const PROFILE_SWATCHES = ['#ff0000', '#00ff00', '#0000ff']
+const navigations = []
+const host = { navigate: to => navigations.push(to) }
 const subscriptions = []
 
 const atom = initial => {
@@ -61,12 +63,15 @@ const patched = src
 const Switch = () => null;
 const ColorSwatches = () => null;
 const PROFILE_SWATCHES = ${JSON.stringify(PROFILE_SWATCHES)};
+const host = globalThis.__host;
 const atom = globalThis.__atom;
 const useValue = globalThis.__useValue;`
   )
   .replace("import { jsx } from 'react/jsx-runtime'", 'const jsx = globalThis.__jsx;')
 
 if (patched === src) throw new Error('patch anchors not found')
+
+globalThis.__host = host
 
 globalThis.__atom = atom
 globalThis.__useValue = useValue
@@ -75,6 +80,7 @@ globalThis.__jsx = (type, props, ...children) => ({ type, props, children: child
 
 const mod = await import(`data:text/javascript;base64,${Buffer.from(patched).toString('base64')}`)
 const plugin = mod.default
+const Preview = mod.Preview
 
 // ---- run -----------------------------------------------------------------
 const store = new Map()
@@ -97,7 +103,8 @@ ok('<style> injected', styleEls.length === 1)
 ok('body class on', classes.has('hermes-chat-bubbles'))
 ok('quiet class on (default)', classes.has('hermes-chat-bubbles-quiet'))
 ok('appearance card registered', registrations.some(r => r.area === APPEARANCE_AREAS.extra))
-ok('2 palette commands', registrations.filter(r => r.area === 'palette').length === 2)
+ok('3 palette commands', registrations.filter(r => r.area === 'palette').length === 3,
+   String(registrations.filter(r => r.area === 'palette').length))
 
 // defaults painted as CSS vars
 ok('--cb-user-w = 68%', rootVars.get('--cb-user-w') === '68%', rootVars.get('--cb-user-w'))
@@ -143,9 +150,96 @@ ok('rejects non-numeric radius -> default 18', g.radius === 18, String(g.radius)
 ok('rejects numeric userColor 42 -> null', g.userColor === null, String(g.userColor))
 ok('painted clamped var', rootVars.get('--cb-user-w') === '100%', rootVars.get('--cb-user-w'))
 
-ctx2._dispose()
+// New knobs: intensity (the darken/lighten lever) must reach the CSS.
+ctx2._dispose?.()
+const registrations3 = []
+const ctx3 = {
+  storage: { get: () => null, set: () => {} },
+  register: r => registrations3.push(r),
+  onDispose: fn => { ctx3._dispose = fn }
+}
+plugin.register(ctx3)
+ok('default userMix = 15%', rootVars.get('--cb-user-mix') === '15%', rootVars.get('--cb-user-mix'))
+ok('default agentMix = 62%', rootVars.get('--cb-agent-mix') === '62%', rootVars.get('--cb-agent-mix'))
+
+// Card render must not throw, and the component it returns must actually build.
+// `render()` hands back an element whose `type` is the component — nothing
+// inside it runs until React calls it, so the test calls it directly.
+const card = registrations3.find(r => r.area === APPEARANCE_AREAS.extra)
+try {
+  const el = card.render()
+  ok('card render returns an element', !!el && typeof el.type === 'function')
+  const tree0 = el.type(el.props)
+  const tree = JSON.stringify(tree0)
+  const count = re => (tree.match(re) || []).length
+  ok('card passes clearLabel to both swatch grids', count(/Seguir el tema/g) === 2, String(count(/Seguir el tema/g)))
+  ok('card exposes two intensity sliders', count(/Intensidad de/g) === 2, String(count(/Intensidad de/g)))
+  ok('card includes the live preview', (() => {
+    // <Preview> is itself a component: its body only exists once called.
+    const findPreview = node => {
+      if (!node || typeof node !== 'object') return null
+      if (Array.isArray(node)) {
+        for (const c of node) { const hit = findPreview(c); if (hit) return hit }
+        return null
+      }
+      if (node.type === Preview) return node
+      return findPreview(node.children)
+    }
+    const p = findPreview(tree0)
+    if (!p) return false
+    const rendered = JSON.stringify(p.type(p.props))
+    return rendered.includes('Tu mensaje') && rendered.includes('Mensaje del agente')
+  })())
+} catch (e) {
+  ok('card renders without throwing', false, String(e && e.message))
+}
+
+ctx3._dispose()
+
+// The card only mounts on the top-level Appearance page, so there must be a way
+// to get there: a palette command that navigates to the settings route.
+const reg4 = []
+const ctx4 = {
+  storage: { get: () => null, set: () => {} },
+  register: r => reg4.push(r),
+  onDispose: () => {}
+}
+plugin.register(ctx4)
+const openRow = reg4.find(r => r.data?.id === 'chat-bubbles.openSettings')
+ok('open-settings command exists', !!openRow)
+if (openRow) {
+  navigations.length = 0
+  openRow.data.run()
+  ok('it navigates to the appearance tab', navigations[0] === '/settings?tab=config:appearance', String(navigations[0]))
+  ok('3 palette commands now', reg4.filter(r => r.area === 'palette').length === 3,
+     String(reg4.filter(r => r.area === 'palette').length))
+}
+
+// Intensity must never be able to make a bubble vanish: min 5%, not 0.
+const store4 = new Map([['config', { enabled: true, quiet: true, userMix: 0, agentMix: 0 }]])
+const reg5 = []
+const ctx5 = {
+  storage: { get: (k, d) => (store4.has(k) ? store4.get(k) : d), set: (k, v) => store4.set(k, v) },
+  register: r => reg5.push(r),
+  onDispose: () => {}
+}
+plugin.register(ctx5)
+ok('intensity 0 clamps to 5%', rootVars.get('--cb-user-mix') === '5%', rootVars.get('--cb-user-mix'))
+ok('agent intensity 0 clamps to 5%', rootVars.get('--cb-agent-mix') === '5%', rootVars.get('--cb-agent-mix'))
+ctx5.onDispose && ctx5.onDispose()
+
+// dispose, from a clean register
+const reg6 = []
+const ctx6 = {
+  storage: { get: () => null, set: () => {} },
+  register: r => reg6.push(r),
+  onDispose: fn => { ctx6._dispose = fn }
+}
+plugin.register(ctx6)
+ok('registered: style present', styleEls.length === 1)
+ctx6._dispose()
 ok('dispose clears body classes', !classes.has('hermes-chat-bubbles') && !classes.has('hermes-chat-bubbles-quiet'))
-ok('dispose clears vars', rootVars.size === 0)
+ok('dispose clears every var', rootVars.size === 0, [...rootVars.keys()].join(','))
 ok('dispose removes <style>', styleEls.length === 0)
 
 for (const r of R) console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.label}${r.extra ? ' — ' + r.extra : ''}`)

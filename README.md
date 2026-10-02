@@ -64,12 +64,29 @@ values, and a clean `dispose`. No dependencies, no build step.
 | Agent bubble width | 88% | slider 30–100 |
 | Corner radius | 18px | slider 0–30 |
 | Your bubble colour | theme (accent) | swatches; empty = follow theme |
+| **Your bubble intensity** | 15% | slider 5–100 |
 | Agent bubble colour | theme (elevated) | swatches; empty = follow theme |
+| **Agent bubble intensity** | 62% | slider 5–100 |
 
-Two palette commands, both persisted:
+A live preview of both bubbles sits above the controls, so you can see what a
+setting does without going back to the conversation.
 
+Three palette commands, all persisted:
+
+- **⌘K → Chat Bubbles: open settings** (jumps to Settings → Appearance)
 - **⌘K → Chat Bubbles: toggle**
 - **⌘K → Chat Bubbles: quiet working rows**
+
+> **Where the card lives:** `appearance.extra` renders at the **end of the
+> top-level Appearance page only** — the app gates it with
+> `subpage === undefined`, and Appearance has six subpages (Chat Display among
+> them). Use *open settings* rather than hunting for the subpage.
+
+### Intensity is floored at 5%
+
+`color-mix(hue N%, surface)` at `N = 0` is the pure surface, so the bubble
+disappears into the page. The slider therefore starts at 5% — the lightest fill
+that still reads as a bubble.
 
 ### Why "hide working rows" defaults to on
 
@@ -86,11 +103,31 @@ card writes variables and the browser repaints:
 ```
 --cb-user-w    --cb-agent-w    --cb-radius
 --cb-user-fill --cb-agent-fill
+--cb-user-mix  --cb-agent-mix
 ```
 
 An empty colour calls `removeProperty`, and the CSS falls back to the theme
 token (`--ui-accent`, `--ui-bg-elevated`) — so switching your Hermes skin
 recolours the bubbles on its own.
+
+The settings card lives at `APPEARANCE_AREAS.extra`, and it reaches the app
+through `ctx.register`. Its state goes in `ctx.storage`, so a bad value from an
+older build self-heals on load instead of being re-clamped forever.
+
+## Troubleshooting
+
+**The settings card is not in Appearance.** It mounts on the top-level
+Appearance page only, not on its six subpages. Use the *open settings* palette
+row, or click Appearance itself (not *Chat Display*).
+
+**The palette rows are missing.** Press **⌘K → Reload desktop plugins**. The
+stylesheet and the palette rows come from the same file, so an app that has not
+reloaded shows both together — or neither. If a reload doesn't help, restart
+the app: the command palette reads the contribution registry once at mount.
+
+**A future Hermes release renames a `data-slot`.** The bubbles quietly stop
+applying and nothing breaks — the settings card, the toggles and your saved
+values keep working, because those live in `ctx.storage`, not in the CSS.
 
 ### Cards keep their stock chrome
 

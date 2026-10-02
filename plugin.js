@@ -20,7 +20,8 @@ import {
   ColorSwatches,
   PROFILE_SWATCHES,
   atom,
-  useValue
+  useValue,
+  host
 } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
 
@@ -30,15 +31,19 @@ const BODY_CLASS = 'hermes-chat-bubbles'
 const QUIET_CLASS = 'hermes-chat-bubbles-quiet'
 const CFG_KEY = 'config'
 
-// Defaults match the values this plugin shipped with before it had a UI.
 const DEFAULTS = {
   enabled: true,
   quiet: true,
   userWidth: 68,
   agentWidth: 88,
   radius: 18,
-  userColor: null, // null = follow the theme (--ui-accent)
-  agentColor: null // null = follow the theme (--ui-bg-elevated)
+  // null = follow the theme. userColor/agentColor are base hues; userMix and
+  // agentMix are how much of that hue is mixed into the surface — the
+  // darken/lighten lever.
+  userColor: null,
+  agentColor: null,
+  userMix: 15,
+  agentMix: 62
 }
 
 const clamp = (n, lo, hi, fallback) => {
@@ -55,7 +60,9 @@ function normalize(raw) {
     agentWidth: clamp(c.agentWidth, 30, 100, DEFAULTS.agentWidth),
     radius: clamp(c.radius, 0, 30, DEFAULTS.radius),
     userColor: typeof c.userColor === 'string' ? c.userColor : DEFAULTS.userColor,
-    agentColor: typeof c.agentColor === 'string' ? c.agentColor : DEFAULTS.agentColor
+    agentColor: typeof c.agentColor === 'string' ? c.agentColor : DEFAULTS.agentColor,
+    userMix: clamp(c.userMix, 5, 100, DEFAULTS.userMix),
+    agentMix: clamp(c.agentMix, 5, 100, DEFAULTS.agentMix)
   }
 }
 
@@ -254,7 +261,7 @@ function apply(cfg) {
   }
 
   if (!on) {
-    for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-agent-fill']) {
+    for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-agent-fill', '--cb-agent-mix']) {
       root.style.removeProperty(k)
     }
     return
@@ -263,6 +270,8 @@ function apply(cfg) {
   root.style.setProperty('--cb-user-w', `${cfg.userWidth}%`)
   root.style.setProperty('--cb-agent-w', `${cfg.agentWidth}%`)
   root.style.setProperty('--cb-radius', `${cfg.radius}px`)
+  root.style.setProperty('--cb-user-mix', `${cfg.userMix}%`)
+  root.style.setProperty('--cb-agent-mix', `${cfg.agentMix}%`)
   // A null colour removes the override so the CSS falls back to the theme token.
   if (cfg.userColor) root.style.setProperty('--cb-user-fill', cfg.userColor)
   else root.style.removeProperty('--cb-user-fill')
@@ -373,6 +382,61 @@ function Slider({ value, min, max, step = 1, suffix = '%', ariaLabel, onChange }
   )
 }
 
+/**
+ * A live preview of both bubbles at the current settings. Without it the
+ * colour and intensity controls are abstract — you cannot see what "82%" means
+ * until you go back to the conversation.
+ */
+function Preview({ userColor, userMix, agentColor, agentMix, radius, userWidth, agentWidth }) {
+  const paint = (color, mix, width, r, side) => ({
+    boxSizing: 'border-box',
+    width: 'fit-content',
+    maxWidth: `${width}%`,
+    marginLeft: side === 'end' ? 'auto' : undefined,
+    padding: '0.4rem 0.7rem',
+    border: '1px solid color-mix(in srgb, var(--ui-stroke-tertiary, #8888) 70%, transparent)',
+    borderRadius:
+      side === 'end'
+        ? `${r}px ${r}px ${r}px ${Math.round(r * 0.28)}px`
+        : `${r}px ${r}px ${Math.round(r * 0.28)}px ${r}px`,
+    background: color
+      ? `color-mix(in srgb, ${color} ${mix}%, var(--ui-bg-editor))`
+      : `color-mix(in srgb, var(--ui-accent) ${mix}%, var(--ui-bg-editor))`,
+    fontSize: '0.75rem',
+    color: 'var(--ui-text-primary)'
+  })
+
+  return jsx(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.375rem',
+        padding: '0.75rem',
+        margin: '0.25rem 0 0.5rem',
+        borderRadius: '0.75rem',
+        background: 'var(--ui-bg-editor)',
+        border: '1px solid var(--ui-stroke-tertiary)'
+      }
+    },
+    jsx(
+      'div',
+      { style: { display: 'flex', justifyContent: 'flex-end' } },
+      jsx('div', { style: paint(userColor, userMix, userWidth, radius, 'end') }, 'Tu mensaje')
+    ),
+    jsx(
+      'div',
+      { style: { display: 'flex', justifyContent: 'flex-start' } },
+      jsx(
+        'div',
+        { style: paint(agentColor, agentMix, agentWidth, radius, 'start') },
+        'Mensaje del agente'
+      )
+    )
+  )
+}
+
 function AppearanceCard() {
   const cfg = useValue($config)
 
@@ -396,6 +460,15 @@ function AppearanceCard() {
         checked: cfg.quiet,
         onCheckedChange: v => commit({ quiet: Boolean(v) })
       })
+    }),
+    jsx(Preview, {
+      userColor: cfg.userColor,
+      userMix: cfg.userMix,
+      agentColor: cfg.agentColor,
+      agentMix: cfg.agentMix,
+      radius: cfg.radius,
+      userWidth: cfg.userWidth,
+      agentWidth: cfg.agentWidth
     }),
     jsx(Row, {
       label: 'Ancho de tus burbujas',
@@ -428,22 +501,50 @@ function AppearanceCard() {
         onChange: v => commit({ radius: v })
       })
     }),
-    jsx(Row, {
-      label: 'Color de tus burbujas',
-      hint: cfg.userColor ? null : 'Siguiendo el tema (acento).',
-      control: jsx(ColorSwatches, {
-        swatches: PROFILE_SWATCHES,
-        value: cfg.userColor,
-        onChange: c => commit({ userColor: c })
-      })
+    jsx(
+      'div',
+      { style: { fontSize: '0.72rem', color: 'var(--ui-text-tertiary)', padding: '0.75rem 0 0.25rem' } },
+      'COLOR DE TUS BURBUJAS'
+    ),
+    jsx(ColorSwatches, {
+      swatches: PROFILE_SWATCHES,
+      value: cfg.userColor,
+      clearLabel: 'Seguir el tema',
+      swatchLabel: c => `Color ${c}`,
+      onChange: c => commit({ userColor: c })
     }),
     jsx(Row, {
-      label: 'Color de las del agente',
-      hint: cfg.agentColor ? null : 'Siguiendo el tema (superficie elevada).',
-      control: jsx(ColorSwatches, {
-        swatches: PROFILE_SWATCHES,
-        value: cfg.agentColor,
-        onChange: c => commit({ agentColor: c })
+      label: 'Intensidad',
+      hint: '5% es lo más claro que se distingue del fondo; 100%, el color pleno.',
+      control: jsx(Slider, {
+        value: cfg.userMix,
+        min: 5,
+        max: 100,
+        ariaLabel: 'Intensidad de tus burbujas',
+        onChange: v => commit({ userMix: v })
+      })
+    }),
+    jsx(
+      'div',
+      { style: { fontSize: '0.72rem', color: 'var(--ui-text-tertiary)', padding: '0.75rem 0 0.25rem' } },
+      'COLOR DE LAS BURBUJAS DEL AGENTE'
+    ),
+    jsx(ColorSwatches, {
+      swatches: PROFILE_SWATCHES,
+      value: cfg.agentColor,
+      clearLabel: 'Seguir el tema',
+      swatchLabel: c => `Color ${c}`,
+      onChange: c => commit({ agentColor: c })
+    }),
+    jsx(Row, {
+      label: 'Intensidad',
+      hint: '5% es lo más claro que se distingue del fondo; 100%, el color pleno.',
+      control: jsx(Slider, {
+        value: cfg.agentMix,
+        min: 5,
+        max: 100,
+        ariaLabel: 'Intensidad de las burbujas del agente',
+        onChange: v => commit({ agentMix: v })
       })
     }),
     jsx(
@@ -474,11 +575,13 @@ function dispose() {
   if (typeof document === 'undefined') return
   document.body?.classList.remove(BODY_CLASS, QUIET_CLASS)
   const root = document.documentElement
-  for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-agent-fill']) {
+  for (const k of ['--cb-user-w', '--cb-agent-w', '--cb-radius', '--cb-user-fill', '--cb-user-mix', '--cb-agent-fill', '--cb-agent-mix']) {
     root.style.removeProperty(k)
   }
   removeStyle()
 }
+
+export { Preview }
 
 export default {
   id: PLUGIN_ID,
@@ -519,6 +622,32 @@ export default {
       id: 'appearance-card',
       area: APPEARANCE_AREAS.extra,
       render: () => jsx(AppearanceCard, null)
+    })
+
+    // The card only mounts on the TOP-LEVEL Appearance page — the app gates it
+    // with `subpage === undefined`, and Appearance has six subpages (Chat
+    // Display among them). So give the user a command that lands on the page
+    // itself instead of making them hunt for it.
+    ctx.register({
+      id: 'palette-open-settings',
+      area: 'palette',
+      data: {
+        id: `${PLUGIN_ID}.openSettings`,
+        label: 'Chat Bubbles: open settings',
+        keywords: ['settings', 'apariencia', 'appearance', 'config', 'ajustes', 'panel'],
+        detail: () => 'Settings → Appearance',
+        run: () => {
+          try {
+            // The tab id is `config:appearance`, NOT `appearance`: the settings
+            // tabs are `config:<section>` ids, and `useRouteEnumParam` silently
+            // coerces an unknown tab to the default view — which is why this
+            // row looked like it did nothing.
+            host.navigate('/settings?tab=config:appearance')
+          } catch {
+            /* router unavailable — the card is still at Appearance's end */
+          }
+        }
+      }
     })
 
     ctx.register({
