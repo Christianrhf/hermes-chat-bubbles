@@ -1,8 +1,8 @@
 # Chat Bubbles for Hermes Desktop
 
 iMessage-style chat bubbles for **every** Hermes Desktop session — yours on the
-right, the agent's on the left — with a settings card in
-**Settings → Appearance**.
+right, the agent's on the left — with a settings page of its own
+(**⌘K → Chat Bubbles: open settings**).
 
 A single-file desktop plugin. No core patch, so **Hermes updates never touch
 it**.
