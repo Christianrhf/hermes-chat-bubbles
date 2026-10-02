@@ -42,6 +42,16 @@ Then in Hermes Desktop: **⌘K → Reload desktop plugins** (or restart the app)
 
 The folder **must** be named `chat-bubbles` — it has to match the plugin id.
 
+## Development
+
+```bash
+node test.mjs
+```
+
+Runs the plugin against a fake DOM and a fake SDK: 29 assertions covering
+registration, the settings card, config persistence, clamping of garbage
+values, and a clean `dispose`. No dependencies, no build step.
+
 ## Settings
 
 **Settings → Appearance**, at the bottom: the *Chat Bubbles* card.
